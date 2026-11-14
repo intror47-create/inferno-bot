@@ -113,6 +113,21 @@ client.on('inviteDelete', (invite) => {
 // ---------- invite tracking on member join ----------
 client.on('guildMemberAdd', async (member) => {
   const guild = member.guild;
+
+  // Auto-assign the "Member" role on join
+  try {
+    await guild.roles.fetch();
+    const memberRole = guild.roles.cache.find((r) => r.name.toLowerCase() === 'member');
+    if (memberRole) {
+      await member.roles.add(memberRole);
+      console.log(`[auto-role] Gave "${memberRole.name}" to ${member.user.tag}`);
+    } else {
+      console.warn('[auto-role] No role named "Member" found');
+    }
+  } catch (err) {
+    console.error('[auto-role] Could not assign role:', err.message);
+  }
+
   const oldMap = inviteCache.get(guild.id) || new Map();
 
   let newInvites;
