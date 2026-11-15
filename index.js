@@ -54,6 +54,52 @@ function getSortedInvites(guildId) {
   return Object.entries(guildData).sort((a, b) => b[1] - a[1]);
 }
 
+// ---------- content filter: no links / no videos ----------
+// Links: blocked everywhere, exempting staff & bots.
+// Videos: allowed only in channels whose name contains "media" or "clips".
+const LINK_RE_HTTP = /(https?:\/\/|ftp:\/\/|www\.)/i;
+const LINK_RE_DOMAIN = /(^|[^a-z0-9.-])(([a-z0-9-]+\.)+(com|net|org|io|gg|me|co|tv|app|cc|xyz|dev|live|gg|to)\b)/i;
+const LINK_RE_INVITE = /(discord\.(gg|com\/invite)|t\.co\/|bit\.ly\/)/i;
+const VIDEO_HOST_RE = /(youtube\.com|youtu\.be|tiktok\.com|twitch\.tv|vimeo\.com|dailymotion\.com|streamable\.com|instagram\.com\/reels?)/i;
+const VIDEO_EXT_RE = /\.(mp4|mov|webm|mkv|avi|flv|m4v|wmv)(\s|$|\?)/i;
+
+function hasLink(text) {
+  if (!text) return false;
+  const squished = text.replace(/\s+/g, '');
+  return LINK_RE_HTTP.test(text) || LINK_RE_DOMAIN.test(squished) || LINK_RE_INVITE.test(squished);
+}
+
+function hasVideo(message) {
+  const content = message.content || '';
+  if (VIDEO_HOST_RE.test(content)) return true;
+  if (VIDEO_EXT_RE.test(content)) return true;
+  for (const [, att] of message.attachments) {
+    const ct = att.contentType || '';
+    const name = att.name || '';
+    if (ct.startsWith('video/') || VIDEO_EXT_RE.test('x' + name) || VIDEO_EXT_RE.test(name)) return true;
+  }
+  return false;
+}
+
+const VIDEO_CHANNEL_HINT = /media|clips/i;
+
+function isLinkExempt(member) {
+  if (!member) return false;
+  return member.permissions.has(PermissionFlagsBits.Administrator)
+    || member.permissions.has(PermissionFlagsBits.ModerateMembers)
+    || member.permissions.has(PermissionFlagsBits.ManageGuild);
+}
+
+async function noticeAndDelete(message, text) {
+  try {
+    await message.delete().catch(() => {});
+    const notice = await message.channel.send(text);
+    setTimeout(() => notice.delete().catch(() => {}), 5000);
+  } catch (err) {
+    console.error('[filter] failed to handle message:', err.message);
+  }
+}
+
 // ---------- client setup ----------
 const client = new Client({
   intents: [
@@ -308,6 +354,27 @@ function inviteEmbed(guild, user, count, title) {
 
 client.on('messageCreate', async (message) => {
   if (message.author.bot || !message.guild) return;
+
+  // content filter runs before any commands
+  try {
+    const member = message.member || (await message.guild.members.fetch(message.author.id).catch(() => null));
+    if (!isLinkExempt(member)) {
+      const videoAllowedHere = VIDEO_CHANNEL_HINT.test(message.channel.name);
+      const isVideo = hasVideo(message);
+      if (isVideo && videoAllowedHere) {
+        // video in a media/clips channel — explicitly allowed
+      } else if (hasLink(message.content)) {
+        await noticeAndDelete(message, '❌ Links aren’t allowed here.');
+        return;
+      } else if (isVideo) {
+        await noticeAndDelete(message, '❌ Videos are only allowed in media/clips channels.');
+        return;
+      }
+    }
+  } catch (err) {
+    console.error('[filter] error:', err.message);
+  }
+
   const content = message.content.trim();
   if (!content.startsWith(PREFIX)) return;
 
