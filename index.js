@@ -92,9 +92,10 @@ function isLinkExempt(member) {
 
 async function noticeAndDelete(message, text) {
   try {
+    // delete the offending message as fast as physically possible
     await message.delete().catch(() => {});
-    const notice = await message.channel.send(text);
-    setTimeout(() => notice.delete().catch(() => {}), 5000);
+    // tell the author in DMs so nothing appears in the channel
+    await message.author.send(text).catch(() => {});
   } catch (err) {
     console.error('[filter] failed to handle message:', err.message);
   }
@@ -357,7 +358,7 @@ client.on('messageCreate', async (message) => {
 
   // content filter runs before any commands
   try {
-    const member = message.member || (await message.guild.members.fetch(message.author.id).catch(() => null));
+    const member = message.member || message.guild.members.cache.get(message.author.id) || (await message.guild.members.fetch(message.author.id).catch(() => null));
     if (!isLinkExempt(member)) {
       const videoAllowedHere = VIDEO_CHANNEL_HINT.test(message.channel.name);
       const isVideo = hasVideo(message);
