@@ -37,6 +37,33 @@ function loadStore() {
 function saveStore(store) {
   fs.writeFileSync(STORE_PATH, JSON.stringify(store, null, 2));
 }
+// ---------- invite reward milestones ----------
+const INVITE_MILESTONES = [
+  { count: 5,  label: '5 villager spawn eggs', role: 'Invite 5' },
+  { count: 15, label: 'Maxed-out kit',         role: 'Invite 15' },
+  { count: 25, label: 'Full shulker of gap',   role: 'Invite 25' },
+  { count: 32, label: '6 Egaps + gap shulker', role: 'Invite 32' },
+  { count: 40, label: 'EVERY reward',          role: 'Invite 40' },
+];
+
+async function awardMilestoneRoles(guild, inviterId, newCount) {
+  const hit = INVITE_MILESTONES.find((m) => newCount === m.count);
+  if (!hit) return null;
+  try {
+    await guild.roles.fetch();
+    let role = guild.roles.cache.find((r) => r.name.toLowerCase() === hit.role.toLowerCase());
+    if (!role) {
+      role = await guild.roles.create({ name: hit.role, reason: 'INFERNO: invite reward milestone' });
+    }
+    const member = await guild.members.fetch(inviterId).catch(() => null);
+    if (member) await member.roles.add(role);
+    return hit;
+  } catch (err) {
+    console.error('[rewards] could not award milestone role:', err.message);
+    return null;
+  }
+}
+
 function addInvite(guildId, inviterId) {
   const store = loadStore();
   store[guildId] = store[guildId] || {};
@@ -203,15 +230,22 @@ client.on('guildMemberAdd', async (member) => {
   if (usedInvite && usedInvite.inviter) {
     const inviter = usedInvite.inviter;
     const count = addInvite(guild.id, inviter.id);
+    const milestone = await awardMilestoneRoles(guild, inviter.id, count);
+    const rewardLine = milestone
+      ? `🎉 **MILESTONE!** Reward: **${milestone.label}** (role \"${milestone.role}\" granted). Keep it up!`
+      : `**${inviter.tag}** now has **${count}** invite${count === 1 ? '' : 's'}.`;
     const embed = new EmbedBuilder()
-      .setTitle('New Recruit')
-      .setColor(0xff4500)
+      .setTitle(milestone ? '🏅 Milestone reached!' : 'New Recruit')
+      .setColor(milestone ? 0xffd700 : 0xff4500)
       .setDescription(
-        `${member} was invited by **${inviter.tag}**!\n` +
-        `**${inviter.tag}** now has **${count}** invite${count === 1 ? '' : 's'}.`
+        `${member} was invited by **${inviter.tag}**!\n${rewardLine}`
       )
       .setTimestamp();
     await welcome.send({ embeds: [embed] }).catch(() => {});
+    // also DM the inviter when they hit a milestone
+    if (milestone) {
+      inviter.send(`🏅 You hit **${count} invites** on Uncharted SMP! Your reward: **${milestone.label}**. Contact staff to claim.`).catch(() => {});
+    }
   } else {
     await welcome
       .send(`${member} joined the server (invite source unknown — possibly a vanity URL or Discord discovery). Welcome!`)
@@ -383,6 +417,11 @@ client.on('messageCreate', async (message) => {
   const command = cmd.toLowerCase();
   const mentionArg = message.mentions.users.first();
 
+  if (command === 'rewards' || command === 'reward') {
+    const lines = INVITE_MILESTONES.map((m) => `**${m.count} invites** — ${m.label}`);
+    return message.reply({ content: `🎟 **Uncharted SMP Invite Rewards**\n${lines.join('\n')}\n\nUse \`!invite\` to see your invite count.` });
+  }
+
   if (command === 'invite' || command === 'invites') {
     const target = mentionArg || message.author;
     const count = getInviteCount(message.guild.id, target.id);
@@ -416,6 +455,7 @@ client.on('messageCreate', async (message) => {
           '`!invite` — show how many players you have invited',
           '`!invite @user` — show another player’s invites',
           '`!leaderboard` — top 10 inviters',
+          '`!rewards` — show invite reward milestones',
           '`!ticket` — open a support ticket',
           '`!help` — this menu',
         ].join('\n')
